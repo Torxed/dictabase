@@ -18,7 +18,7 @@ class autodict(dict):
 	def __init__(self, *args, **kwargs):
 		super(autodict, self).__init__(*args, **kwargs)
 
-	def __getitem__(self, ley):
+	def __getitem__(self, key):
 		if not key in self:
 			self[key] = autodict()
 
@@ -140,11 +140,9 @@ class dictabase(dict, Thread):
 
 def server():
 	## TODO: Testdata below!
-	stash = {
-		'players' : {
-			'Torxed' : {'url' : 'https://github.com/Torxed/dictabase'}
-		}
-	}
+	stash = autodict()
+	stash['players']['Torxed']['url'] = 'https://github.com/Torxed/dictabase'
+
 	## ----
 
 	state = abspath(f'{getcwd()}/state_dictabase.pickle')
@@ -207,11 +205,14 @@ def server():
 						datas[fid]['pos'] = stash[datas[fid]['instanced']]
 
 					elif mode == 0:
-						if block in datas[fid]['pos']:
-							datas[fid]['pos'] = datas[fid]['pos'][block]
-							response = request_id+':'+str(datas[fid]['pos'])
-							print('Sending: {}'.format(response))
-							socks[fid]['sock'].send(bytes(response, 'UTF-8'))
+						print('Mode 0', block)
+						if not block in datas[fid]['pos']: datas[fid]['pos'][block] = autodict()
+
+						datas[fid]['pos'] = datas[fid]['pos'][block]
+						response = request_id+':'+str(datas[fid]['pos'])
+						print('Sending: {}'.format(response))
+						socks[fid]['sock'].send(bytes(response, 'UTF-8'))
+						
 					elif mode == 1:
 						print('Updating stash[{}]'.format(datas[fid]['instanced']))
 						d = ast.literal_eval(block)

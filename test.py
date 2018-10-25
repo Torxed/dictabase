@@ -1,6 +1,6 @@
 from dictabase import dictabase as dict
 
-core = dict("core") # Loads the "core" branch from stash
-core["players"]["new"] = 2
+players = dict("players") 
+players["New Player"]["url"] = "http://homepage/avatar.png"
 
-print(core)
+print(players)
