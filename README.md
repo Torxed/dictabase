@@ -7,9 +7,9 @@ A dictionary, but also a "database".
 
 	[user@host]$ python dictabase.py
 
-### Using the dict that isn't a dict *(and also not recommended to any sane person)*:
+### Using the dict
 
-Here's a short example of how you would load the top level item called `players` from the *"databas"*.
+Here's a short example of how you would load the top level item called `players` from the *databas*.<br>
 Everything stored in the *database* is virtually a dictionary, and choosing a top level item from it is required.
 
 ```python
@@ -24,6 +24,13 @@ print(players)
 
 If it isn't obvious, overriding `dict` is a pretty stupid idea.
 You should also consider something like [MongoDB](https://github.com/mongodb/mongo) which is pretty stable and reliable. It also returns dict-ish types of results.
+
+## What is this?
+
+It's a network-based dictionary.<br>
+A way to access a dictionary as if it's a dictionary, but all new data is fetched over the network.
+
+The only reason behind this is to demonstrate in a extremely simplfied and minimal way how to access memory resources aacross a network.
 
 ## Final note
 

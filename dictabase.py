@@ -1,10 +1,11 @@
-import ast, json, pickle, time
+import json, pickle, time
 from socket import *
 from select import epoll, EPOLLIN, EPOLLHUP
 from threading import Thread, enumerate as tnumerate
 from os import getcwd
 from os.path import abspath, isfile
 from shutil import copy2
+from struct import pack, unpack
 
 socks = {}
 datas = {}
@@ -48,6 +49,11 @@ class autodict(dict):
 				copy[key] = val
 		return copy
 
+def b(num):
+	return pack('B', num)
+def i(num):
+	return pack('>I', num)
+
 class dictabase(dict, Thread):
 	def __init__(self, dict_name=None, master=True, log=False, *args, **kwargs):
 		self.dict_name = dict_name
@@ -63,7 +69,8 @@ class dictabase(dict, Thread):
 			self.polly = epoll()
 			self.polly.register(self.mainFid, EPOLLIN)
 			self.sock.connect(('127.0.0.1', 1337))
-			self.sock.send(bytes(f'{flags["request_id"]}:1:{dict_name}', 'UTF-8')+b'\x00')
+			length = len(dict_name)
+			self.sock.send(b(flags["request_id"])+b(1)+i(length)+bytes(dict_name, 'UTF-8'))
 			flags["request_id"] += 1
 
 		super(dictabase, self).__init__(*args, **kwargs)
@@ -75,29 +82,20 @@ class dictabase(dict, Thread):
 		#dictbase[self.dict_name].last_trace.append(key)
 		if not key in self:
 			if self.master:
-				self.sock.send(bytes(f'{flags["request_id"]}:0:{key}', 'UTF-8')+b'\x00')
+				length = len(key)
+				self.sock.send(b(flags["request_id"])+b(0)+i(length)+bytes(key, 'UTF-8'))
 			else:
-				dictbase[self.dict_name].sock.send(bytes(f'{flags["request_id"]}:0:{key}', 'UTF-8')+b'\x00')
+				dictbase[self.dict_name].sock.send(b(flags["request_id"])+b(0)+i(length)+bytes(key, 'UTF-8'))
 
-			print(flags["request_id"])
-			time.sleep(1)
-			print(requests)
 			while flags["request_id"] not in requests:
-				pass
+				time.sleep(0.025) # TODO: Swap for a dict lock
 
 			while len(requests[flags["request_id"]]['data']) < requests[flags["request_id"]]['length']:
-				print('Waiting for data')
-				#print('Waiting for data on request: {}'.format(flags["request_id"]))
-				#print(flags["request_id"] not in requests)
-				#print(flags)
-				#if flags["request_id"] in requests:
-				#	print(len(requests[flags["request_id"]]['data']) < requests[flags["request_id"]]['length'])
-				#	print(len(requests[flags["request_id"]]['data']), requests[flags["request_id"]]['length'])
+				time.sleep(0.025) # # TODO: Swap for a dict lock
 
 			if dictbase[self.dict_name].log:
 				print(f'Creating key: {key}')
 			dictbase[self.dict_name].lock = True
-			print(pickle.loads(requests[flags["request_id"]]['data']))
 			self[key] = dictabase(dict_name=self.dict_name, master=False, **pickle.loads(requests[flags["request_id"]]['data']))
 			dictbase[self.dict_name].lock = False
 
@@ -108,10 +106,14 @@ class dictabase(dict, Thread):
 
 	def __setitem__(self, key, val):
 		dict.__setitem__(self, key, val)
+		print(self)
 		if not dictbase[self.dict_name].lock:
 			if dictbase[self.dict_name].log:
 				print('Set {}:'.format(key), dictbase[self.dict_name])
-			dictbase[self.dict_name].sock.send(bytes(f'{flags["request_id"]}:1:{dictbase[self.dict_name]}', 'UTF-8')+b'\x00')
+
+			payload = pickle.dumps(dict(dictbase[self.dict_name]))
+			length = len(payload)
+			dictbase[self.dict_name].sock.send(b(flags["request_id"])+b(1)+i(length)+payload)
 			flags["request_id"] += 1
 
 	def __eq__(self, other):
@@ -138,25 +140,33 @@ class dictabase(dict, Thread):
 				mt = t
 				break
 
+		data = b''
 		while mt and mt.isAlive():
 			for fid, eid in self.polly.poll(0.025):
 				if fid == self.mainFid and eid == EPOLLIN:
-					data = self.sock.recv(8192)
+					tmp = self.sock.recv(8192)
 
-					if data == b'' or b':' not in data:
+					if tmp == b'':
 						self.sock.shutdown(SHUT_RDWR)
 					else:
-						#data = data.decode('UTF-8')
-						request_id, length, data = data.split(b':', 2)
-						#request_id, data = data.split(':', 1)
-						length = int(length)
-						request_id = int(request_id)
-						#data = pickle.loads(data)
+						data += tmp
+
+						# TODO: Data might (will) get chopped because of this:
+						request_id = unpack('B', data[0:1])[0]
+						length = unpack('>I', data[1:5])[0]
+						block = data[5:5+length]
+						data = data[5+length:]
+
+						if dictbase[self.dict_name].log:
+							print(f'Request Id: {request_id}')
+							print(f'Length: {length}')
+							print(f'Block: {block}')
+
 						if not request_id in requests: requests[request_id] = {'length' : length, 'data' : b''}
-						requests[request_id]['data'] += data
+						requests[request_id]['data'] = block
 						if len(requests[request_id]['data']) >= requests[request_id]['length']:
-							#if dictbase[self.dict_name].log:
-							print('Server sent data: {} [{}]'.format(data, request_id))
+							if dictbase[self.dict_name].log:
+								print('Server sent data: {} [{}]'.format(block, request_id))
 
 				elif eid == 17:
 					if dictbase[self.dict_name].log:
@@ -168,8 +178,8 @@ def server():
 	## TODO: Testdata below!
 	stash = autodict()
 	stash['players']['Torxed']['url'] = 'https://github.com/Torxed/dictabase'
-
 	## ----
+
 
 	#state = abspath(f'{getcwd()}/state_dictabase.pickle')
 	#try:
@@ -189,6 +199,7 @@ def server():
 
 	while 1:
 		run = {}
+		dels = {}
 		for fid, eid in polly.poll(0.025):
 			run[fid] = True
 			if fid == mainFid:
@@ -212,19 +223,36 @@ def server():
 				polly.unregister(fid)
 				socks[fid]['sock'].close()
 				del(socks[fid])
-				del(datas[fid])
+				dels[fid] = True
 
 		for fid in datas:
 			if fid in run: continue
 
+			# TODO: The data might come half way
+			#       and this will cause a data wipe
+			#       at the end, because we don't shorten data by block.
 			if len(datas[fid]['data']):
 				print('Parsing data: {}'.format(datas[fid]['data']))
-				for block in datas[fid]['data'].split(b'\x00'):
-					if len(block) <= 0: continue
+				data_pos = 0
+				while data_pos < len(datas[fid]['data']):
+				#for block in datas[fid]['data'].split(b'\x00'): # TODO
+				#	if len(block) <= 0: continue
 
-					block = block.decode('UTF-8')
-					request_id, mode, block = block.split(':', 2)
-					mode = int(mode)
+					#block = block.decode('UTF-8')
+					#request_id, mode, length, block = datas[fid]['data'][data_pos:].split(b':', 3)
+					
+					#print(f'Data pos: {data_pos}')
+					request_id = unpack('B', datas[fid]['data'][data_pos:data_pos+1])[0]
+					mode = unpack('B', datas[fid]['data'][data_pos+1:data_pos+2])[0]
+					length = unpack('>I', datas[fid]['data'][data_pos+2:data_pos+6])[0]
+					block = datas[fid]['data'][data_pos+6:data_pos+6+length]
+
+					data_pos += 6+length#len(request_id)+len(mode)+len(length)+int(length)+3
+					#print(f'Data pos [new]: {data_pos}')
+					#print(f'Request Id: {request_id}')
+					#print(f'Mode: {mode}')
+					#print(f'Length: {length}')
+					#print(f'Block: {block}')
 
 					if not datas[fid]['instanced']:
 						datas[fid]['instanced'] = block
@@ -235,13 +263,12 @@ def server():
 
 						payload = pickle.dumps(one_level)
 						length = len(payload)
-						response = f'{request_id}:{length}'
-						print('Sending: {}:<pickle data>'.format(response))
-						print(json.dumps(one_level, indent=4, sort_keys=True))
-						socks[fid]['sock'].send(bytes(response+':', 'UTF-8')+payload)
+						print(f'Sending: {request_id}:{length}({len(payload)}):<pickle data>')
+#						print(json.dumps(one_level, indent=4, sort_keys=True))
+						socks[fid]['sock'].send(b(request_id)+i(length)+payload)
 
 					elif mode == 0:
-						print('Mode 0', block)
+						#print('Mode 0', block)
 						if not block in datas[fid]['pos']: datas[fid]['pos'][block] = autodict()
 
 						datas[fid]['pos'] = datas[fid]['pos'][block]
@@ -249,11 +276,11 @@ def server():
 						length = len(payload)
 						response = f'{request_id}:{length}'
 						print('Sending: {}:<pickle data>'.format(response))
-						socks[fid]['sock'].send(bytes(response+':', 'UTF-8')+payload)
+						socks[fid]['sock'].send(b(request_id)+i(length)+payload)
 
 					elif mode == 1:
-						print('Updating stash[{}]: {}'.format(datas[fid]['instanced'], stash[datas[fid]['instanced']]))
-						d = ast.literal_eval(block)
+						#print('Updating stash[{}]: {}'.format(datas[fid]['instanced'], stash[datas[fid]['instanced']]))
+						d = pickle.loads(block)
 						stash[datas[fid]['instanced']] = d
 
 						#if isfile(state):
@@ -264,7 +291,12 @@ def server():
 
 						print(stash)
 
+				#print('Clearing data')
 				datas[fid]['data'] = b''
+
+
+		for fid in dels:
+			del(datas[fid])
 
 if __name__ == '__main__':
 	server()
